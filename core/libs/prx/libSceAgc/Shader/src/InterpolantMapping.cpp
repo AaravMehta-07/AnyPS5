@@ -20,7 +20,10 @@ int APS5_VABI sceAgcCreateInterpolantMapping(ShaderRegister* regs, const Shader*
 
     if (ps == nullptr || ps->num_input_semantics == 0) {
         FillIdentityInterpolants(regs, 0);
-        if (ps != nullptr) AgcDriverResolveShaderAbi_nid_postfix(ps, {regs, 32}, {});
+        if (ps != nullptr) {
+            AgcDriverResolveShaderAbi_nid_postfix(ps, {regs, 32}, {});
+            if (gs != nullptr) AgcDriverResolveGraphicsAbi_nid_postfix(gs, ps, 0);
+        }
         return 0;
     }
 
@@ -54,6 +57,7 @@ int APS5_VABI sceAgcCreateInterpolantMapping(ShaderRegister* regs, const Shader*
 
     FillIdentityInterpolants(regs, ps->num_input_semantics);
     AgcDriverResolveShaderAbi_nid_postfix(ps, {regs, 32}, {});
+    AgcDriverResolveGraphicsAbi_nid_postfix(gs, ps, 0);
     return 0;
 }
 
