@@ -14,6 +14,20 @@
 
 namespace AgcDriver::DriverDetail {
 
+template <typename TWork>
+void Driver::timed(double WorkerProfile::*bucket, TWork&& work) {
+    static thread_local WorkerProfile profile;
+    const auto begin = std::chrono::steady_clock::now();
+    work();
+    const auto end = std::chrono::steady_clock::now();
+    profile.*bucket += std::chrono::duration<double, std::milli>(end - begin).count();
+    static const bool report = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    if (report && end - profile.reported > std::chrono::seconds(10)) {
+        profile.reported = end;
+        std::fprintf(stderr, "[gpu] worker at %.0f s: dispatch %.1f s, draw %.1f s, wait %.1f s\n", std::chrono::duration<double>(end - profile.start).count(), profile.dispatchMs / 1000, profile.drawMs / 1000, profile.waitMs / 1000);
+    }
+}
+
 void Driver::execute(const Submission& submission) {
     if (submission.suspend) {
 
