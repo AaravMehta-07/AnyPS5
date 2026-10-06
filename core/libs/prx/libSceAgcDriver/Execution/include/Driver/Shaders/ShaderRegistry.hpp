@@ -15,6 +15,7 @@
 namespace AgcDriver::DriverDetail {
 
 struct ShaderSnapshot;
+using ShaderRegistry = std::map<std::uint64_t, std::shared_ptr<const ShaderSnapshot>>;
 
 struct PreparedShaderState {
     struct Entry {
@@ -26,8 +27,21 @@ struct PreparedShaderState {
         std::uint64_t fragmentId;
         ShaderRecompiler::RectListShaders shaders;
     };
+    struct RectangleProgress {
+        std::weak_ptr<const ShaderSnapshot> fragment;
+        std::size_t vertexCount;
+        std::size_t fragmentCount;
+    };
+    struct GraphicsAbi {
+        std::vector<std::uint64_t> key;
+        std::weak_ptr<const ShaderRegistry> registry;
+        std::vector<std::weak_ptr<const ShaderSnapshot>> stages;
+    };
     std::vector<Entry> entries;
+    std::vector<std::vector<std::uint64_t>> registeredAbis;
+    std::vector<GraphicsAbi> graphicsAbis;
     std::vector<Rectangle> rectangles;
+    std::vector<RectangleProgress> rectangleProgress;
     std::vector<std::weak_ptr<const ShaderSnapshot>> fragments;
     bool rectangleRequested = false;
 };
@@ -43,8 +57,6 @@ struct ShaderSnapshot {
     std::vector<std::byte> header;
     std::shared_ptr<PreparedShaders> prepared = std::make_shared<PreparedShaders>();
 };
-
-using ShaderRegistry = std::map<std::uint64_t, std::shared_ptr<const ShaderSnapshot>>;
 
 void PublishRegisteredShader(std::shared_ptr<ShaderRegistry>& registry, const std::shared_ptr<const ShaderSnapshot>& snapshot);
 
