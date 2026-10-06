@@ -85,7 +85,12 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         if (probeThis) std::fprintf(stderr, "[gpu] probing dispatch %llu of 0x%llx\n", static_cast<unsigned long long>(probeDispatch.second), static_cast<unsigned long long>(address));
     }
 
-    const auto preparedHandle = SourceHandleFor(snapshot, codeOffset, localDevice->Serial(), request);
+    struct ProbeScope {
+        bool active;
+        explicit ProbeScope(bool active) : active(active) { if (active) ShaderRecompiler::SetDebugProbeActive(true); }
+        ~ProbeScope() { if (active) ShaderRecompiler::SetDebugProbeActive(false); }
+    } probeScope{probeThis};
+    const auto invocation = InvocationFor(snapshot, codeOffset, localDevice->Serial(), request);
     if (fillBuffer(queue, submission.queue, packet, std::span(snapshot.code).subspan(codeOffset), userData, compute, localDevice)) {
         pendingDispatchPhases().outcome = DispatchOutcome::FillHle;
         return;
@@ -180,17 +185,11 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         static const bool dumpShaders = std::getenv("APS5_DUMP_SHADERS") != nullptr;
         try {
 
-            struct ProbeScope {
-                bool active;
-                explicit ProbeScope(bool active) : active(active) { if (active) ShaderRecompiler::SetDebugProbeActive(true); }
-                ~ProbeScope() { if (active) ShaderRecompiler::SetDebugProbeActive(false); }
-            } probeScope{probeThis};
             const auto waitedBefore = traceCapSync() ? Graphics::Recorder::ThreadWaitedMs() : 0.0;
             forgetAtCapture = GuestMemory::ForgetSerial();
-            const auto& handle = preparedHandle;
             capture = [&] {
                 const SampledReadScope sampling(evidenceReads);
-                return shaderMemory->Capture(request, handle.get());
+                return shaderMemory->Capture(invocation);
             }();
             captured = shaderMemory->Regions();
             request.context.memory = captured;
@@ -201,7 +200,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
             const auto started = std::chrono::steady_clock::now();
 
 
-            compiledResult = ShaderRecompiler::MaterializeShader(request, *capture, *handle);
+            compiledResult = invocation.Materialize(*capture);
             if (compiledResult->cacheHit) ++cacheHits;
             const auto elapsed = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
             static double totalMs = 0;

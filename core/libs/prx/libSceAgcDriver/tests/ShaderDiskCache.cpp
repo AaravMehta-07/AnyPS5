@@ -1,5 +1,6 @@
 #include "ShaderDiskCache.hpp"
 #include "CacheKey.hpp"
+#include "Optimization/ResourceMaterializer.hpp"
 #include "ShaderCacheDirectory.hpp"
 #include <array>
 #include <chrono>
@@ -174,6 +175,7 @@ CompiledVariant sampleVariant() {
     image.indirectSearchIterations = 3;
     image.indirectResources = {1, 2, 3};
     info.info.images = {image};
+    ResourceMaterializer::PrepareImageModes(info.info);
     info.info.samplers = {{7, 0x10, true, false}};
     info.info.sampledPairs = {{0, 0, 0x10}};
     StageInput input{};
