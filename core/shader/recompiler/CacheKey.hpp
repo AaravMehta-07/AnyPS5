@@ -165,7 +165,6 @@ private:
         append(key, value.earlyZ);
         append(key, value.executeOnNoop);
         append(key, value.targetOutputMode);
-        append(key, value.targetExportMapping);
     }
 
     static void append(std::vector<std::uint64_t>& key, const ShaderVertexResourceDestination& value) {
