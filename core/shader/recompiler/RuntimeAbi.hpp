@@ -9,24 +9,24 @@
 
 namespace ShaderRecompiler::RuntimeAbi {
 
-inline constexpr std::uint32_t Version = 4u;
+inline constexpr std::uint32_t Version = 5u;
 inline constexpr std::uint32_t DescriptorSet = 0u;
 inline constexpr std::uint32_t StageCount = 4u;
 inline constexpr std::uint32_t PushConstantDwords = 32u;
 inline constexpr std::uint32_t FirstImageBinding = 1u;
 inline constexpr std::uint32_t FirstComparisonImageBinding = 22u;
 inline constexpr std::uint32_t FirstStorageImageBinding = 29u;
-inline constexpr std::uint32_t ImageBindingCount = 43u;
+inline constexpr std::uint32_t ImageBindingCount = 49u;
 
 enum class Binding : std::uint32_t {
     Buffers = 0u,
-    Samplers = 44u,
-    Gds = 45u,
-    BdaPagetable = 46u,
-    FaultBuffer = 47u,
-    FlattenedSrt = 48u,
-    ShaderData = 49u,
-    Count = 50u
+    Samplers = 50u,
+    Gds = 51u,
+    BdaPagetable = 52u,
+    FaultBuffer = 53u,
+    FlattenedSrt = 54u,
+    ShaderData = 55u,
+    Count = 56u
 };
 
 enum class Stage : std::uint32_t { Main, Fragment, TessellationControl, TessellationEvaluation };
