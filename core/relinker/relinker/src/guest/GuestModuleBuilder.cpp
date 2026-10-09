@@ -31,7 +31,7 @@ std::vector<std::string> ReadNeededNames(const Domain::SysVDynamicSection& dynam
 
 }
 
-std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path& inputPath, const std::filesystem::path& outputPath, Domain::SysVDynamicSection& dynamic, const bool windows, const bool toIntel, ISyscallScanner& syscallScanner, const bool lazyBinding, const std::string& runPath, const std::set<std::string>& excludedModules) const {
+std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path& inputPath, const std::filesystem::path& outputPath, Domain::SysVDynamicSection& dynamic, const bool windows, const bool toIntel, ISyscallScanner& syscallScanner, const bool lazyBinding, const std::string& runPath, const std::set<std::string>& excludedModules, std::optional<std::filesystem::path> reservedOutputPath) const {
     const auto root = std::filesystem::absolute(inputPath).parent_path();
     const auto singular = root / "sce_module";
     const auto plural = root / "sce_modules";
@@ -87,6 +87,10 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     }
     if (!unmatchedExclusions.empty()) throw Domain::RelinkerException("Excluded guest module file not found: " + *unmatchedExclusions.begin());
     std::sort(paths.begin(), paths.end());
+    if (reservedOutputPath && std::filesystem::exists(*reservedOutputPath)) {
+        for (const auto& path : paths)
+            if (std::filesystem::equivalent(path, *reservedOutputPath)) throw Domain::RelinkerException("Call registry output would overwrite a guest module input: " + path.string());
+    }
     if (paths.empty()) return {};
     if (lazyBinding) throw Domain::RelinkerException("Guest modules require eager binding; --lazy-binding is incompatible");
     std::vector<GuestImage> images;

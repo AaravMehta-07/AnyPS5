@@ -5,6 +5,7 @@
 #include <domain/Types.hpp>
 #include <relinker/domain/ISyscallScanner.hpp>
 #include <filesystem>
+#include <optional>
 #include <set>
 #include <string>
 
@@ -54,7 +55,7 @@ struct GuestArtifact {
 
 class GuestModuleBuilder {
 public:
-    std::vector<GuestArtifact> Build(const std::filesystem::path& inputPath, const std::filesystem::path& outputPath, Domain::SysVDynamicSection& dynamic, bool windows, bool toIntel, ISyscallScanner& syscallScanner, bool lazyBinding, const std::string& runPath, const std::set<std::string>& excludedModules) const;
+    std::vector<GuestArtifact> Build(const std::filesystem::path& inputPath, const std::filesystem::path& outputPath, Domain::SysVDynamicSection& dynamic, bool windows, bool toIntel, ISyscallScanner& syscallScanner, bool lazyBinding, const std::string& runPath, const std::set<std::string>& excludedModules, std::optional<std::filesystem::path> reservedOutputPath = std::nullopt) const;
 };
 
 }

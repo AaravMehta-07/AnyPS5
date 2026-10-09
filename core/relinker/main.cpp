@@ -24,6 +24,7 @@
 #include <filesystem>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -45,6 +46,13 @@ int main(const int argc, char* argv[]) {
 
         auto sourceBytes = fileReader.Read(args.inputPath);
         const std::string absPath = std::filesystem::absolute(args.outputPath).string();
+        std::string registryPath;
+        if (args.writeRegistry) {
+            const std::filesystem::path outFsPath(absPath);
+            registryPath = (outFsPath.parent_path() / (outFsPath.stem().string() + ".registry.json")).string();
+            if (std::filesystem::exists(registryPath) && std::filesystem::equivalent(args.inputPath, registryPath))
+                throw Domain::RelinkerException("Call registry output would overwrite the input file: " + args.inputPath);
+        }
 
         std::vector<Codegen::TrampolineSite> trampolines;
         if (args.toIntel) {
@@ -91,12 +99,11 @@ int main(const int argc, char* argv[]) {
 
         std::vector<Relinker::GuestArtifact> guestArtifacts;
         if (!args.skipSceModule) {
-            guestArtifacts = Relinker::GuestModuleBuilder().Build(args.inputPath, absPath, result.DynamicSection, args.toWindows, args.toIntel, *syscallScanner, args.lazyBinding, args.runPath, args.excludedSceModules);
+            guestArtifacts = Relinker::GuestModuleBuilder().Build(args.inputPath, absPath, result.DynamicSection, args.toWindows, args.toIntel, *syscallScanner, args.lazyBinding, args.runPath, args.excludedSceModules,
+                args.writeRegistry ? std::optional<std::filesystem::path>(registryPath) : std::nullopt);
         }
 
         if (args.writeRegistry) {
-            const std::filesystem::path outFsPath(absPath);
-            const std::string registryPath = (outFsPath.parent_path() / (outFsPath.stem().string() + ".registry.json")).string();
             fileWriter.Write(registryPath, std::make_shared<Relinker::CallRegistryWriter>()->WriteCallRegistry(result.RegistryEntries));
         }
 
