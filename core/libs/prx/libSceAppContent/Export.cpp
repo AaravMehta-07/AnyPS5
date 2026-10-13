@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cstring>
 #include <filesystem>
+#include <limits>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -105,7 +106,9 @@ int APS5_VABI sceAppContentDownloadDataFormat(const AppContentMountPoint* mount_
 int APS5_VABI sceAppContentDownloadDataGetAvailableSpaceKb(const AppContentMountPoint* mount_point, size_t* available_space_kb) {
     if (!available_space_kb) return SCE_APP_CONTENT_ERROR_PARAMETER;
     if (!mount_point || std::strncmp(mount_point->data, DOWNLOAD_MOUNT_POINT, sizeof(mount_point->data)) != 0) APS5_INVALID_ARG_EX;
-    const std::uint64_t quotaKb = GetAppDownloadDataSizeMiB_nid_postfix() * 1024u;
+    const std::uint64_t quotaMiB = GetAppDownloadDataSizeMiB_nid_postfix();
+    if (quotaMiB > std::numeric_limits<std::uint64_t>::max() / 1024u) throw std::overflow_error("download data quota in KiB exceeds uint64 range");
+    const std::uint64_t quotaKb = quotaMiB * 1024u;
     if (quotaKb == 0) {
         *available_space_kb = 0;
         return 0;

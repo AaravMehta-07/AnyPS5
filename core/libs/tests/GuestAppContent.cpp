@@ -5,6 +5,8 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <limits>
+#include <stdexcept>
 
 extern "C" {
 int APS5_VABI sceAppContentInitialize(const AppContentInitParam*, AppContentBootParam*);
@@ -30,7 +32,12 @@ static constexpr int ErrorBusy = static_cast<int>(0x80D90003);
 static constexpr int ErrorNotMounted = static_cast<int>(0x80D90004);
 static void Require(bool value) { if (!value) std::abort(); }
 
-int main() {
+int main(int argc, char** argv) {
+    const bool quotaOverflow = argc == 2 && std::strcmp(argv[1], "quota-overflow") == 0;
+    const bool quotaBoundary = argc == 2 && std::strcmp(argv[1], "quota-boundary") == 0;
+    Require(argc == (quotaOverflow || quotaBoundary ? 2 : 1));
+    constexpr std::uint64_t MaxQuotaMiB = std::numeric_limits<std::uint64_t>::max() / 1024u;
+    const std::uint64_t downloadDataSizeMiB = quotaOverflow ? MaxQuotaMiB + 1 : quotaBoundary ? MaxQuotaMiB : 0;
     const auto original = std::filesystem::current_path();
     const auto directory = original / ("appcontent-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(std::filesystem::create_directory(directory));
@@ -38,14 +45,33 @@ int main() {
     std::filesystem::create_directories("app0/sce_sys");
     {
         std::ofstream param("app0/sce_sys/param.json", std::ios::binary);
-        param << R"({"titleId":"PPSA00000","localizedParameters":{"en-US":{"titleName":"Example"}},"downloadDataSize":0,)"
-              R"("userDefinedParam1":23566,"userDefinedParam2":-7,"userDefinedParam3":0,"userDefinedParam4":2147483647})";
+        param << R"({"titleId":"PPSA00000","localizedParameters":{"en-US":{"titleName":"Example"}},"downloadDataSize":)"
+              << downloadDataSizeMiB << ','
+              << R"("userDefinedParam1":23566,"userDefinedParam2":-7,"userDefinedParam3":0,"userDefinedParam4":2147483647})";
         Require(static_cast<bool>(param));
     }
     AppContentMountPoint download{};
     std::memcpy(download.data, "/download0", 11);
     size_t availableKb = 12345;
+    if (quotaOverflow) {
+        bool overflow = false;
+        try { sceAppContentDownloadDataGetAvailableSpaceKb(&download, &availableKb); }
+        catch (const std::overflow_error&) { overflow = true; }
+        Require(overflow);
+        Require(availableKb == 12345);
+        Require(!std::filesystem::exists(directory / "download0"));
+        std::filesystem::current_path(original);
+        std::filesystem::remove_all(directory);
+        return 0;
+    }
     Require(sceAppContentDownloadDataGetAvailableSpaceKb(&download, &availableKb) == 0);
+    if (quotaBoundary) {
+        Require(availableKb <= MaxQuotaMiB * 1024u);
+        Require(std::filesystem::exists(directory / "download0"));
+        std::filesystem::current_path(original);
+        std::filesystem::remove_all(directory);
+        return 0;
+    }
     Require(availableKb == 0);
     Require(sceAppContentDownloadDataGetAvailableSpaceKb(&download, nullptr) == ErrorParameter);
     const auto downloadData = ResolvePath_nid_no_patch("/download0");

@@ -8,8 +8,11 @@ if(BUILD_TESTING)
     target_link_libraries(guest_appcontent_tests PRIVATE libSceAppContent libc)
     configure_windows_unwind(guest_appcontent_tests)
     add_test(NAME guest_appcontent COMMAND guest_appcontent_tests)
+    add_test(NAME guest_appcontent_quota_overflow COMMAND guest_appcontent_tests quota-overflow)
+    add_test(NAME guest_appcontent_quota_boundary COMMAND guest_appcontent_tests quota-boundary)
+    set_tests_properties(guest_appcontent_quota_overflow guest_appcontent_quota_boundary PROPERTIES TIMEOUT 20)
     if(WIN32)
-        set_tests_properties(guest_appcontent PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_appcontent guest_appcontent_quota_overflow guest_appcontent_quota_boundary PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAppContent>")
     endif()
 endif()
