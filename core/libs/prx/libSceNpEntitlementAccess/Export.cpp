@@ -66,6 +66,7 @@ const std::vector<NpEntitlementAccessAddcontEntitlementInfo>& OwnedAddons() {
             info.download_status = 4;
             addons.push_back(info);
         }
+        if (file.bad()) throw std::runtime_error("NpEntitlementAccess: cannot read " + path.string());
         return addons;
     }();
     return owned;
