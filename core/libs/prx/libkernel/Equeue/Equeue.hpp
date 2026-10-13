@@ -2,6 +2,7 @@
 #define CORE_LIBS_PRX_LIBKERNEL_EQUEUE_EQUEUE_HPP
 
 #include <cstdint>
+#include <algorithm>
 #include <deque>
 #include <functional>
 #include <list>
@@ -9,6 +10,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "SceTypes.hpp"
@@ -81,6 +83,41 @@ public:
     int DeleteEvent(uintptr_t ident, int16_t filter);
     bool HasEvent(uintptr_t ident, int16_t filter);
     int EditEvent(uintptr_t ident, int16_t filter, const std::function<void(KernelEqueueEvent&)>& edit);
+    template<class TUpdate>
+    int RegisterEvent(const KernelEvent& change, TUpdate update) {
+        std::unique_lock lock(m_mutex);
+        if (m_closed) {
+            return SCE_KERNEL_ERROR_EBADF;
+        }
+        auto it = std::find_if(m_events.begin(), m_events.end(), [&change](const auto& event) {
+            return event.event.ident == change.ident && event.event.filter == change.filter;
+        });
+        if (it == m_events.end()) {
+            if ((change.flags & EV_ADD) == 0) {
+                return SCE_KERNEL_ERROR_ENOENT;
+            }
+            KernelEqueueEvent event{};
+            const int error = update(event, false);
+            if (error != EQUEUE_OK) {
+                return error;
+            }
+            m_events.push_back(std::move(event));
+        } else if ((change.flags & EV_DELETE) != 0) {
+            if (it->filter.deleteEventFunc != nullptr) {
+                auto owner = it->filter.owner;
+                it->filter.deleteEventFunc(m_handle, &*it);
+            }
+            m_events.erase(it);
+        } else {
+            const int error = update(*it, true);
+            if (error != EQUEUE_OK) {
+                return error;
+            }
+        }
+        m_cond.NotifyOne();
+        WakePollers();
+        return EQUEUE_OK;
+    }
     int GetTriggeredEvents(KernelEvent* ev, int num);
     int WaitForEvents(KernelEvent* ev, int num, uint32_t micros);
     int WaitForEventsUntil(KernelEvent* ev, int num, std::uint64_t deadlineNanos);

@@ -1,5 +1,7 @@
 #include "SceTypes.hpp"
+#include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -54,6 +56,7 @@ static constexpr std::uint16_t EvError = 0x4000;
 static constexpr std::uint32_t NoteTrigger = 0x01000000;
 static constexpr std::uint32_t NoteFfcopy = 0xc0000000;
 static constexpr std::uint32_t NoteFfor = 0x80000000;
+static constexpr std::uint32_t NoteSeconds = 0x0001;
 static constexpr std::uint32_t NoteUseconds = 0x0004;
 static constexpr std::uint32_t NoteDelete = 0x0001;
 static constexpr std::uint32_t NoteWrite = 0x0002;
@@ -69,6 +72,11 @@ static constexpr int SceOk = 0;
 static constexpr int SceEnoent = static_cast<int>(0x80020002);
 static constexpr int SceEbadf = static_cast<int>(0x80020009);
 static constexpr int SceEinval = static_cast<int>(0x80020016);
+
+static_assert(sizeof(KernelEvent) == 32);
+static_assert(offsetof(KernelEvent, data) == 16);
+static_assert(offsetof(KernelEvent, udata) == 24);
+static_assert(sizeof(KernelTimespec) == 16);
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -149,8 +157,131 @@ static void Timers() {
     RequireFailure(Apply(kq, Change(3, EvfiltTimer, EvAdd, 0, -1)), GuestEinval);
     RequireFailure(Apply(kq, Change(3, EvfiltTimer, EvAdd, 0x10, 5)), GuestEinval);
     RequireFailure(Apply(kq, Change(3, EvfiltTimer, EvAdd, NoteUseconds | 0x1, 5)), GuestEinval);
-    Require(Apply(kq, Change(4, EvfiltTimer, EvAdd, 0, 100000)) == 0);
-    Require(Throws([kq] { Apply(kq, Change(4, EvfiltTimer, EvAdd, 0, 5)); }));
+    int originalMarker = 0;
+    int updatedMarker = 0;
+    Require(Apply(kq, Change(40, EvfiltUser, EvAdd | EvOneshot)) == 0);
+    Require(Apply(kq, Change(4, EvfiltTimer, EvAdd | EvOneshot, NoteUseconds, 50000, &originalMarker)) == 0);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    Require(Apply(kq, Change(40, EvfiltUser, 0, NoteTrigger)) == 0);
+    Require(Poll(kq, events, 1) == 1 && events[0].ident == 40);
+    const auto oneShotRestart = std::chrono::steady_clock::now();
+    Require(Apply(kq, Change(4, EvfiltTimer, EvAdd, 0, 300, &updatedMarker)) == 0);
+    Require(Poll(kq, events, 4) == 0);
+    Require(Wait(kq, events, 4) == 1);
+    Require(std::chrono::steady_clock::now() - oneShotRestart >= std::chrono::milliseconds(250));
+    Require(events[0].ident == 4 && events[0].filter == EvfiltTimer && events[0].data == 1 && events[0].udata == &updatedMarker);
+    Require((events[0].flags & (EvClear | EvOneshot)) == (EvClear | EvOneshot));
+    Require(Poll(kq, events, 4) == 0);
+    RequireFailure(Apply(kq, Change(4, EvfiltTimer, EvDelete)), GuestEnoent);
+
+    int periodicMarker = 0;
+    int periodicUpdatedMarker = 0;
+    Require(Apply(kq, Change(5, EvfiltTimer, EvAdd, NoteUseconds, 50000, &periodicMarker)) == 0);
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    const auto periodicRestart = std::chrono::steady_clock::now();
+    Require(Apply(kq, Change(5, EvfiltTimer, EvAdd | EvOneshot, NoteUseconds, 150000, &periodicUpdatedMarker)) == 0);
+    Require(Wait(kq, events, 4) == 1);
+    Require(std::chrono::steady_clock::now() - periodicRestart >= std::chrono::milliseconds(120));
+    Require(events[0].ident == 5 && events[0].data == 1 && events[0].udata == &periodicUpdatedMarker);
+    Require((events[0].flags & (EvClear | EvOneshot)) == EvClear);
+    Require(Wait(kq, events, 4) == 1 && events[0].ident == 5 && events[0].data == 1);
+    Require((events[0].flags & EvOneshot) == 0 && events[0].udata == &periodicUpdatedMarker);
+    Require(Apply(kq, Change(5, EvfiltTimer, EvDelete)) == 0);
+
+    int touchedMarker = 0;
+    int touchedUpdatedMarker = 0;
+    Require(Apply(kq, Change(6, EvfiltTimer, EvAdd | EvOneshot, NoteUseconds, 1000, &touchedMarker)) == 0);
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    const KernelEvent touch = Change(6, EvfiltTimer, EvEnable, NoteUseconds | 0x1, -1, &touchedUpdatedMarker);
+    const KernelTimespec zero{0, 0};
+    Require(kevent_nid_postfix(kq, &touch, 1, events, 4, &zero) == 1);
+    Require(events[0].ident == 6 && events[0].data == 1 && events[0].udata == &touchedUpdatedMarker);
+    Require((events[0].flags & (EvClear | EvOneshot)) == (EvClear | EvOneshot));
+    RequireFailure(Apply(kq, Change(6, EvfiltTimer, EvDelete)), GuestEnoent);
+
+    int waitingMarker = 0;
+    int waitingUpdatedMarker = 0;
+    Require(Apply(kq, Change(8, EvfiltTimer, EvAdd | EvOneshot, NoteSeconds, 2, &waitingMarker)) == 0);
+    std::atomic<bool> waiterStarted = false;
+    int waiterResult = -1;
+    KernelEvent waiterEvent{};
+    std::thread waiter([&] {
+        waiterStarted.store(true, std::memory_order_release);
+        waiterResult = Wait(kq, &waiterEvent, 1);
+    });
+    while (!waiterStarted.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    const auto waiterRestart = std::chrono::steady_clock::now();
+    Require(Apply(kq, Change(8, EvfiltTimer, EvAdd, NoteUseconds, 20000, &waitingUpdatedMarker)) == 0);
+    waiter.join();
+    Require(waiterResult == 1);
+    Require(std::chrono::steady_clock::now() - waiterRestart < std::chrono::milliseconds(900));
+    Require(waiterEvent.ident == 8 && waiterEvent.data == 1 && waiterEvent.udata == &waitingUpdatedMarker);
+    Require((waiterEvent.flags & (EvClear | EvOneshot)) == (EvClear | EvOneshot));
+    RequireFailure(Apply(kq, Change(8, EvfiltTimer, EvDelete)), GuestEnoent);
+
+    int invalidTimerMarker = 0;
+    int invalidTimerUpdatedMarker = 0;
+    Require(Apply(kq, Change(7, EvfiltTimer, EvAdd | EvOneshot, NoteUseconds, 200000, &invalidTimerMarker)) == 0);
+    const KernelEvent invalidTimerUpdate = Change(7, EvfiltTimer, EvAdd, NoteUseconds | 0x1, 50000, &invalidTimerUpdatedMarker);
+    Require(kevent_nid_postfix(kq, &invalidTimerUpdate, 1, events, 4, &zero) == 1);
+    Require(events[0].ident == 7 && events[0].filter == EvfiltTimer && events[0].data == GuestEinval);
+    Require((events[0].flags & (EvError | EvOneshot)) == (EvError | EvOneshot));
+    Require(events[0].udata == &invalidTimerUpdatedMarker);
+    Require(Poll(kq, events, 4) == 0);
+    RequireFailure(Apply(kq, Change(7, EvfiltTimer, EvDelete)), GuestEnoent);
+    Require(Apply(kq, Change(7, EvfiltTimer, EvAdd | EvOneshot, NoteUseconds, 0)) == 0);
+    Require(Wait(kq, events, 4) == 1 && events[0].ident == 7 && events[0].data == 1);
+    Require((events[0].flags & (EvError | EvOneshot)) == EvOneshot);
+
+    int persistentErrorMarker = 0;
+    int persistentErrorUpdatedMarker = 0;
+    int recoveredTimerMarker = 0;
+    Require(Apply(kq, Change(9, EvfiltTimer, EvAdd, NoteUseconds, 200000, &persistentErrorMarker)) == 0);
+    Require(Apply(kq, Change(9, EvfiltTimer, EvAdd, NoteUseconds | 0x1, 50000, &persistentErrorUpdatedMarker)) == 0);
+    Require(Wait(kq, events, 4) == 1 && events[0].ident == 9 && events[0].data == GuestEinval);
+    Require((events[0].flags & (EvError | EvClear | EvOneshot)) == (EvError | EvClear));
+    Require(events[0].udata == &persistentErrorUpdatedMarker);
+    Require(Poll(kq, events, 4) == 0);
+    Require(Apply(kq, Change(9, EvfiltTimer, EvAdd, NoteUseconds, -1, &persistentErrorUpdatedMarker)) == 0);
+    Require(Wait(kq, events, 4) == 1 && events[0].ident == 9 && events[0].data == GuestEinval);
+    Require((events[0].flags & (EvError | EvClear | EvOneshot)) == (EvError | EvClear));
+    Require(Apply(kq, Change(9, EvfiltTimer, EvAdd, NoteUseconds, 10000, &recoveredTimerMarker)) == 0);
+    Require(Wait(kq, events, 4) == 1 && events[0].ident == 9 && events[0].data == 1);
+    Require((events[0].flags & (EvError | EvClear | EvOneshot)) == (EvError | EvClear));
+    Require(events[0].udata == &recoveredTimerMarker);
+    Require(Apply(kq, Change(9, EvfiltTimer, EvDelete)) == 0);
+    Require(close_nid_postfix(kq) == 0);
+}
+
+static void TimerRegistrationRacesDelivery() {
+    const int kq = kqueue_nid_postfix();
+    std::atomic<bool> started = false;
+    std::atomic<bool> done = false;
+    std::thread reader([&] {
+        KernelEvent event{};
+        started.store(true, std::memory_order_release);
+        while (!done.load(std::memory_order_acquire)) {
+            const int count = Poll(kq, &event, 1);
+            Require(count == 0 || count == 1);
+            if (count == 1) {
+                Require(event.ident == 20 && event.filter == EvfiltTimer && event.data == 1);
+                Require((event.flags & (EvClear | EvOneshot)) == (EvClear | EvOneshot));
+            }
+        }
+    });
+    while (!started.load(std::memory_order_acquire)) std::this_thread::yield();
+    for (int i = 0; i < 2000; ++i) {
+        Require(Apply(kq, Change(20, EvfiltTimer, EvAdd | EvOneshot, NoteUseconds, 0)) == 0);
+    }
+    done.store(true, std::memory_order_release);
+    reader.join();
+    Require(Apply(kq, Change(20, EvfiltTimer, EvAdd | EvOneshot, NoteUseconds, 0)) == 0);
+    KernelEvent event{};
+    Require(Poll(kq, &event, 1) == 1 && event.ident == 20 && event.data == 1);
+    RequireFailure(Apply(kq, Change(20, EvfiltTimer, EvDelete)), GuestEnoent);
     Require(close_nid_postfix(kq) == 0);
 }
 
@@ -414,6 +545,7 @@ static void Timeout() {
 int main() {
     CreateAndClose();
     Timers();
+    TimerRegistrationRacesDelivery();
     UserEvents();
     SocketPair();
     Errors();

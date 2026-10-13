@@ -150,32 +150,47 @@ int AddDescriptorKnote(const KernelEqueueRef& queue, KernelEvent& change, std::u
     return GuestErrno(queue->AddEvent(event));
 }
 
-int AddTimerKnote(const KernelEqueueRef& queue, KernelEvent& change, std::uint16_t flags) {
-    std::int64_t period = change.data;
-    if (period < 0) {
-        return GUEST_EINVAL;
-    }
-    if (period == 0 && (flags & EV_ONESHOT) == 0) {
-        period = 1;
-    }
-    if ((change.fflags & ~NOTE_TIMER_PRECMASK) != 0) {
-        return GUEST_EINVAL;
-    }
-    const auto periodNs = TimerPeriodNanos(period, change.fflags);
-    if (!periodNs) {
-        return GUEST_EINVAL;
-    }
-    const std::uint64_t now = KernelEqueuePrivate::MonotonicNs();
-    KernelEqueueEvent event{};
-    event.deadlineNs = *periodNs <= std::numeric_limits<std::uint64_t>::max() - now ? now + *periodNs : std::numeric_limits<std::uint64_t>::max();
-    event.intervalNs = (flags & EV_ONESHOT) != 0 ? 0 : *periodNs;
-    event.event = change;
-    event.event.flags = static_cast<std::uint16_t>(flags | EV_CLEAR);
-    event.event.fflags = 0;
-    event.event.data = 0;
-    change.fflags = 0;
-    change.data = 0;
-    return GuestErrno(queue->AddEvent(event));
+int RegisterTimerKnote(const KernelEqueueRef& queue, KernelEvent& change) {
+    return GuestErrno(queue->RegisterEvent(change, [&change](KernelEqueueEvent& event, bool existing) {
+        if (!existing) {
+            event.event = change;
+            event.event.flags = static_cast<std::uint16_t>((change.flags & ~KNOTE_CLEARED_FLAGS) | EV_CLEAR);
+        } else {
+            event.event.udata = change.udata;
+            if ((change.flags & EV_ADD) == 0) {
+                return EQUEUE_OK;
+            }
+        }
+        std::int64_t period = change.data;
+        const bool invalid = period < 0 || (change.fflags & ~NOTE_TIMER_PRECMASK) != 0;
+        if (!invalid && period == 0 && (event.event.flags & EV_ONESHOT) == 0) {
+            period = 1;
+        }
+        const auto periodNs = invalid ? std::nullopt : TimerPeriodNanos(period, change.fflags);
+        if (!periodNs && !existing) {
+            return SCE_KERNEL_ERROR_EINVAL;
+        }
+        event.deadlineNs = 0;
+        event.intervalNs = 0;
+        event.triggered = false;
+        event.event.fflags = 0;
+        event.event.data = 0;
+        event.pendingEvents.clear();
+        if (!periodNs) {
+            event.event.flags |= EV_ERROR;
+            event.event.data = GUEST_EINVAL;
+            event.triggered = true;
+        } else {
+            const std::uint64_t now = KernelEqueuePrivate::MonotonicNs();
+            event.deadlineNs = *periodNs <= std::numeric_limits<std::uint64_t>::max() - now ? now + *periodNs : std::numeric_limits<std::uint64_t>::max();
+            event.intervalNs = (event.event.flags & EV_ONESHOT) != 0 ? 0 : *periodNs;
+        }
+        if (!existing) {
+            change.fflags = 0;
+            change.data = 0;
+        }
+        return EQUEUE_OK;
+    }));
 }
 
 int AddUserKnote(const KernelEqueueRef& queue, KernelEvent& change, std::uint16_t flags) {
@@ -212,9 +227,6 @@ void TouchUserKnote(KernelEqueueEvent& event, KernelEvent& change) {
 }
 
 int ModifyKnote(const KernelEqueueRef& queue, KernelEvent& change) {
-    if (change.filter == EVFILT_TIMER) {
-        NotImplemented_nid_no_patch("kevent: changing an existing EVFILT_TIMER");
-    }
     if ((change.filter == EVFILT_READ || change.filter == EVFILT_WRITE) && (change.fflags & NOTE_LOWAT) != 0) {
         NotImplemented_nid_no_patch("kevent: NOTE_LOWAT");
     }
@@ -250,6 +262,9 @@ int Register(const KernelEqueueRef& queue, int kqueueDescriptor, KernelEvent& ch
     if ((change.flags & EV_FORCEONESHOT) != 0) {
         NotImplemented_nid_no_patch("kevent: EV_FORCEONESHOT");
     }
+    if (change.filter == EVFILT_TIMER) {
+        return RegisterTimerKnote(queue, change);
+    }
     if (change.filter == EVFILT_READ || change.filter == EVFILT_WRITE || change.filter == EVFILT_VNODE) {
         if (const int error = DescriptorFilterError(kqueueDescriptor, change.ident)) {
             return error;
@@ -260,9 +275,6 @@ int Register(const KernelEqueueRef& queue, int kqueueDescriptor, KernelEvent& ch
             return GUEST_ENOENT;
         }
         const auto flags = static_cast<std::uint16_t>(change.flags & ~KNOTE_CLEARED_FLAGS);
-        if (change.filter == EVFILT_TIMER) {
-            return AddTimerKnote(queue, change, flags);
-        }
         if (change.filter == EVFILT_USER) {
             return AddUserKnote(queue, change, flags);
         }
