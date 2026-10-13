@@ -6,6 +6,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -13,7 +14,8 @@
 namespace {
 
 bool g_titleLoaded = false;
-bool g_iconAttempted = false;
+std::mutex g_iconMutex;
+bool g_iconInitialized = false;
 bool g_iconLoaded = false;
 char g_title[128] = {};
 char g_titleId[12] = {};
@@ -68,10 +70,13 @@ const bool g_dataMounted = [] {
 }();
 
 void ensureIconLoaded() {
-    if (g_iconAttempted) return;
-    g_iconAttempted = true;
+    std::lock_guard lock(g_iconMutex);
+    if (g_iconInitialized) return;
     const auto resolvedPath = ResolvePath_nid_no_patch(AppMetadataIconGuestPath);
-    if (!std::filesystem::exists(resolvedPath)) return;
+    if (!std::filesystem::exists(resolvedPath)) {
+        g_iconInitialized = true;
+        return;
+    }
     std::ifstream file(resolvedPath, std::ios::binary);
     if (!file.is_open()) throw std::runtime_error("failed to open icon0.png");
     file.seekg(0, std::ios::end);
@@ -84,6 +89,7 @@ void ensureIconLoaded() {
     if (bytes.size() < 8 || std::memcmp(bytes.data(), PngSignature, sizeof(PngSignature)) != 0) throw std::runtime_error("icon0.png is not a valid PNG file");
     g_iconBytes = std::move(bytes);
     g_iconLoaded = true;
+    g_iconInitialized = true;
 }
 
 }
