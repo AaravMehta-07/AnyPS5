@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <thread>
+#include <utility>
 
 extern "C" {
 int APS5_VABI sceHttpUriParse(SceHttpUriElement*, const char*, void*, std::size_t*, std::size_t);
@@ -331,6 +332,26 @@ int main() {
     Require(parse(lineFeedOnly, std::strlen(lineFeedOnly)) == 25);
     Require(major == 10 && minor == 25 && code == 404);
     Require(phrase == lineFeedOnly + 14 && phraseLength == 10);
+
+    const char* maxVersion = "HTTP/2147483647.2147483647 200 OK\n";
+    Require(parse(maxVersion, std::strlen(maxVersion)) == static_cast<int>(std::strlen(maxVersion)));
+    Require(major == 2147483647 && minor == 2147483647 && code == 200);
+    const char* leadingZeroVersion = "HTTP/0000000000000000000002147483647.1 200 OK\n";
+    Require(parse(leadingZeroVersion, std::strlen(leadingZeroVersion)) == static_cast<int>(std::strlen(leadingZeroVersion)));
+    Require(major == 2147483647 && minor == 1 && code == 200);
+    const char* unchangedPhrase = "unchanged";
+    for (const auto& [line, expectedMajor] : {std::pair{"HTTP/2147483648.1 200 OK\n", 0},
+             std::pair{"HTTP/1.2147483648 200 OK\n", 1}, std::pair{"HTTP/4294967296.1 200 OK\n", 0},
+             std::pair{"HTTP/999999999999999999999999999999999999999999999999.1 200 OK\n", 0}}) {
+        major = -1;
+        minor = -1;
+        code = -1;
+        phrase = unchangedPhrase;
+        phraseLength = 123;
+        Require(parse(line, std::strlen(line)) == parseInvalidResponse);
+        Require(major == expectedMajor && minor == 0 && code == -1);
+        Require(phrase == unchangedPhrase && phraseLength == 123);
+    }
 
     const char* noPhrase = "HTTP/2.0 204\r\n";
     Require(parse(noPhrase, std::strlen(noPhrase)) == 14);

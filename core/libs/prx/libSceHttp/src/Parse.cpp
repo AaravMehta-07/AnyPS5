@@ -1,6 +1,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceHttp/src/HttpErrors.hpp"
@@ -15,7 +16,9 @@ bool parseVersionNumber(const char* line, size_t lineLen, size_t& index, int32_t
     if (index >= lineLen || !isAsciiDigit(line[index])) return false;
     uint32_t number = 0;
     while (index < lineLen && isAsciiDigit(line[index])) {
-        number = number * 10 + static_cast<uint32_t>(line[index] - '0');
+        const uint32_t digit = static_cast<uint32_t>(line[index] - '0');
+        if (number > (static_cast<uint32_t>(std::numeric_limits<int32_t>::max()) - digit) / 10) return false;
+        number = number * 10 + digit;
         ++index;
     }
     *value = static_cast<int32_t>(number);
